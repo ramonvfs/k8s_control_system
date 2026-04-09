@@ -1,5 +1,6 @@
 CC = gcc
 CFLAGS = -Wall -O2
+LIBS = -lcurl
 
 all: dc_motor car
 
