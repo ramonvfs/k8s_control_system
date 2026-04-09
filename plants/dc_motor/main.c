@@ -38,7 +38,7 @@ int main() {
         rk4(motor_dynamics, t, x, u, dt, 2);
         t += dt;
 
-        printf("T: %6.2f | Vel: %6.2f rad/s | Erro: %6.2f\n | U: %6.2f\n", t, x[0], error, u);
+        printf("T: %6.2f | Vel: %6.2f rad/s | Erro: %6.2f | U: %6.2f\n", t, x[0], error, u);
         
         usleep(10000);
     }
