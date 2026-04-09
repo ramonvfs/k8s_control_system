@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <unistd.h>
+#include "../common/network.h"
 #include "../common/solver.h"
 
 // State-Space Model
@@ -12,22 +13,26 @@ void car_dynamics(double t, double *x, double u, double *dxdt) {
 }
 
 int main() {
-    double x = {0.0};
-    double setpoint = 100.0;
+    double x[1] = {0.0};
+    double setpoint = 30.0;
     double t = 0.0;
     double dt = 0.01;
 
     double u = 0.0;           // Control Signal
+    double error = 0;
+    double prev_error = 0;
 
     while(1) {
-        double error = setpoint - x;
+        error = setpoint - x[0];
 
-        u = error * 3;
+        u = call_fuzzy_controller(error, error - prev_error);
 
-        rk4(car_dynamics, t, &x, u, dt, 1);
+        prev_error = error;
+
+        rk4(car_dynamics, t, x, u, dt, 1);
         t += dt;
 
-        printf("T: %6.2f | Vel: %6.2f m/s | Er: %6.2f\n", t, x, error);
+        printf("T: %6.2f | Vel: %6.2f m/s | Er: %6.2f\n | U: %6.2f\n", t, x, error, u);
 
         usleep(10000);
     }

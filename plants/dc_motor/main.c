@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <unistd.h>
+#include "../common/network.h"
 #include "../common/solver.h"
 
 // State-Space Model
@@ -24,16 +25,20 @@ int main() {
     double dt = 0.01;
 
     double u = 0.0;           // Control Signal
+    double error = 0;
+    double prev_error = 0;
 
     while(1) {
-        double erro = setpoint - x[0];
+        error = setpoint - x[0];
 
-        u = erro * 1.2; 
+        u = call_fuzzy_controller(error, error - prev_error);
+
+        prev_error = error;
 
         rk4(motor_dynamics, t, x, u, dt, 2);
         t += dt;
 
-        printf("T: %6.2f | Vel: %6.2f rad/s | Cor: %6.2f A | Erro: %6.2f\n", t, x[0], x[1], erro);
+        printf("T: %6.2f | Vel: %6.2f rad/s | Erro: %6.2f\n | U: %6.2f\n", t, x[0], error, u);
         
         usleep(10000);
     }
