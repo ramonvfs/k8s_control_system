@@ -18,21 +18,27 @@ int main() {
     double t = 0.0;
     double dt = 0.01;
 
-    double u = 0.0;           // Control Signal
+    double v_n = 0.0;           // Control Signal
     double error = 0;
     double prev_error = 0;
+    double s_n = 0.0;
+
+    double ki = 0.1;
+    double kp = 0.05;
 
     while(1) {
         error = setpoint - x[0];
 
-        u = call_fuzzy_controller(error, error - prev_error);
+        s_n = call_fuzzy_controller(error * ki, (error - prev_error) * kp);
+
+        v_n = v_n + s_n;
 
         prev_error = error;
 
-        rk4(car_dynamics, t, x, u, dt, 1);
+        rk4(car_dynamics, t, x, v_n, dt, 1);
         t += dt;
 
-        printf("T: %6.2f | Vel: %6.2f m/s | Er: %6.2f | U: %6.2f\n", t, x[0], error, u);
+        printf("T: %6.2f | Vel: %6.2f m/s | Er: %6.2f | U: %6.2f\n", t, x[0], error, v_n);
 
         usleep(10000);
     }
