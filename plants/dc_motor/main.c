@@ -20,7 +20,7 @@ void motor_dynamics(double t, double *x, double u, double *dxdt) {
 
 int main() {
     double x[2] = {0.0, 0.0}; // Initial State
-    double setpoint = 100.0;
+    double setpoint = 10.0;
     double t = 0.0;
     double dt = 0.01;
 
@@ -39,10 +39,9 @@ int main() {
 
         v_n = v_n + s_n;
 
-        /* Saturation?
+        // Saturation (Max Motor Voltage)
         if (v_n > 24.0) v_n = 24.0;
         if (v_n < -24.0) v_n = -24.0;
-        */
 
         prev_error = error;
 

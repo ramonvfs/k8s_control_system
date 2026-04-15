@@ -20,7 +20,7 @@ void tank_dynamics(double t, double *x, double u, double *dxdt) {
 }
 
 int main() {
-    double x[1] = {0.5};
+    double x[1] = {2.5};
     double setpoint = 2.0;
     double t = 0.0;
     double dt = 0.01;
@@ -30,8 +30,8 @@ int main() {
     double prev_error = 0;
     double s_n = 0.0;
 
-    double ki = 0.1;
-    double kp = 0.05;
+    double ki = 0.5;
+    double kp = 10;
 
     while(1) {
         error = setpoint - x[0];
@@ -40,17 +40,19 @@ int main() {
 
         v_n = v_n + s_n;
 
-        /* Valve Saturation
+        // Valve Saturation
         if (v_n > 1.0) v_n = 1.0; 
         if (v_n < 0.0) v_n = 0.0;
-        */
 
         prev_error = error;
 
         rk4(tank_dynamics, t, x, v_n, dt, 1);
+
+        if (x[0] < 0) x[0] = 0;
+
         t += dt;
 
-        printf("T: %6.2f | N: %6.2f m | Er: %6.2f | U: %6.2f\n", t, x[0], error, v_n);
+        printf("T: %6.2f | N: %6.2f m | Er: %6.2f | Valv: %6.2f%%\n", t, x[0], error, v_n * 100.0);
 
         usleep(10000);
     }
