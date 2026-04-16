@@ -1,7 +1,7 @@
 #include <stdio.h>
 #include <unistd.h>
-#include "../common/network.h"
-#include "../common/solver.h"
+#include "../common/include/network.h"
+#include "../common/include/solver.h"
 
 // State-Space Model
 void motor_dynamics(double t, double *x, double u, double *dxdt) {
