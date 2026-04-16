@@ -7,9 +7,11 @@ COMMON_OBJ = $(COMMON_SRC:.c=.o)
 
 PLANTS = car dc_motor tank
 
-all: $(PLANTS)
+TARGETS = $(addprefix bin/, $(PLANTS))
 
-bin/sim_%: %/main.c $(COMMON_OBJ)
+all: $(TARGETS)
+
+bin/%: %/main.c $(COMMON_OBJ)
 	@mkdir -p bin
 	$(CC) $(CFLAGS) $< $(COMMON_OBJ) -o $@ $(LDFLAGS)
 
