@@ -12,10 +12,14 @@ RUN apk add --no-cache \
 
 WORKDIR /app
 
-COPY . .
+COPY CMakeLists.txt ./
 
-RUN cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && \
-    cmake --build build --parallel
+RUN mkdir -p src && touch src/main.cpp && \
+    cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+
+COPY src ./src
+
+RUN cmake --build build --parallel
 
 FROM alpine:3.19
 
