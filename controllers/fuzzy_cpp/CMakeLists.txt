@@ -16,12 +16,22 @@ FetchContent_Declare(
   URL https://github.com/yhirose/cpp-httplib/archive/refs/tags/v0.42.0.tar.gz
 )
 
-FetchContent_MakeAvailable(json httplib)
+FetchContent_Declare(
+  fuzzylite
+  URL https://github.com/fuzzylite/fuzzylite/archive/refs/tags/v6.0.tar.gz
+)
 
-find_library(FUZZYLITE_LIB fuzzylite REQUIRED)
-if(NOT FUZZYLITE_LIB)
-    message(FATAL_ERROR "Fuzzylite not found! Install with: sudo apt install libfuzzylite-dev")
-endif()
+FetchContent_MakeAvailable(json httplib fuzzylite)
+
+file(GLOB_RECURSE FUZZYLITE_SOURCES
+    "${fuzzylite_SOURCE_DIR}/fuzzylite/src/*.cpp"
+)
+
+add_library(fuzzylite STATIC ${FUZZYLITE_SOURCES})
+target_include_directories(fuzzylite
+    PUBLIC
+        "${fuzzylite_SOURCE_DIR}/fuzzylite"
+)
 
 add_executable(fuzzy_service src/main.cpp)
 
@@ -29,7 +39,7 @@ target_link_libraries(fuzzy_service
     PRIVATE 
         nlohmann_json::nlohmann_json
         httplib::httplib
-        ${FUZZYLITE_LIB}
+        fuzzylite
         pthread
 )
 
