@@ -1,0 +1,42 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fuzzy-ctrl-cpp
+  labels: 
+    app: fuzzy-ctrl
+    language: cpp
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: fuzzy-ctrl
+  template:
+    metadata:
+      labels:
+        app: fuzzy-ctrl
+    spec:
+      containers:
+      - name: fuzzy-ctrl-cpp
+        image: ramonvfs/fuzzy-ctrl-cpp:v1
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 5000
+        resources:
+          requests:
+            cpu: "100m" 
+          limits:
+            cpu: "200m"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: fuzzy-service
+spec:
+  type: NodePort
+  selector:
+    app: fuzzy-ctrl
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 5000
+      nodePort: 30005
