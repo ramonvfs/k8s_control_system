@@ -5,11 +5,11 @@
 #include "../common/include/solver.h"
 
 void tank_dynamics(double t, double *x, double u, double *dxdt) {
-    double A = 2.0;      // Tank cross-sectional area (m2)
-    double a = 0.05;     // Outlet tube cross-sectional area (m2)
-    double qm = 0.1;     // Maximum pump flow rate (m3/s)
-    double g = 9.81;     // Acceleration due to gravity (m/s2)
-    double Vo = 0.5;     // Outlet valve opening (0.0 to 1.0)
+    double A = 1.0;      // Tank cross-sectional area (m2)
+    double a = 0.01;     // Outlet tube cross-sectional area (m2)
+    double qm = 2.0;     // Maximum pump flow rate (m3/s)
+    double g = 9.8;     // Acceleration due to gravity (m/s2)
+    double Vo = 0.0;     // Outlet valve opening (0.0 to 1.0)
 
     // x[0] represents the water level n(t)
     // Ensure level is not negative due to numerical errors in sqrt
@@ -20,18 +20,18 @@ void tank_dynamics(double t, double *x, double u, double *dxdt) {
 }
 
 int main() {
-    double x[1] = {2.5};
-    double setpoint = 2.0;
+    double x[1] = {0.0}; // Initial water level n(0) = 0 m
+    double setpoint = 20.0;
     double t = 0.0;
-    double dt = 0.01;
+    double dt = 0.001;
 
     double v_n = 0.0;           // Control Signal
     double error = 0;
     double prev_error = 0;
     double s_n = 0.0;
 
-    double ki = 0.5;
-    double kp = 10;
+    double ki = (1.0 / 30.0);
+    double kp = 100.0;
 
     while(1) {
         error = setpoint - x[0];

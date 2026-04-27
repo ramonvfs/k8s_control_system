@@ -5,8 +5,8 @@
 
 // State-Space Model
 void car_dynamics(double t, double *x, double u, double *dxdt) {
-    double m = 1000.0; // Vehicle Mass (kg)
-    double b = 50.0;   // Damping Coefficient (N.s/m)
+    double m = 450.0; // Vehicle Mass (kg)
+    double b = 20.0;   // Damping Coefficient (N.s/m)
 
     /// dxdt[0] -> Linear Acceleration
     dxdt[0] = (u - b * x[0]) / m;
@@ -14,7 +14,7 @@ void car_dynamics(double t, double *x, double u, double *dxdt) {
 
 int main() {
     double x[1] = {0.0};
-    double setpoint = 30.0;
+    double setpoint = 20.0; // ms (72 km/h)
     double t = 0.0;
     double dt = 0.01;
 
@@ -23,8 +23,8 @@ int main() {
     double prev_error = 0;
     double s_n = 0.0;
 
-    double ki = 0.033;
-    double kp = 50;
+    double ki = (1.0 / 180.0);
+    double kp = 5.0;
 
     while(1) {
         error = setpoint - x[0];
