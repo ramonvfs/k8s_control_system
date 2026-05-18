@@ -1,5 +1,6 @@
 #include <fl/Headers.h>
 #include <httplib.h>
+#include <mutex>
 #include <nlohmann/json.hpp>
 #include <iostream>
 #include <algorithm>
@@ -100,8 +101,11 @@ public:
 int main() {
     FuzzyFIM controller;
     httplib::Server svr;
+    std::mutex mtx;
 
     svr.Post("/control", [&](const httplib::Request& req, httplib::Response& res) {
+        std::lock_guard<std::mutex> lock(mtx);
+        
         try {
             auto data = json::parse(req.body);
             double e = data.value("error", 0.0);
