@@ -3,6 +3,7 @@
 #include <unistd.h>
 #include "../common/include/network.h"
 #include "../common/include/solver.h"
+#include "../common/include/setpoint.h"
 
 void tank_dynamics(double t, double *x, double u, double *dxdt) {
     double A = 1.0;      // Tank cross-sectional area (m2)
@@ -20,8 +21,10 @@ void tank_dynamics(double t, double *x, double u, double *dxdt) {
 }
 
 int main() {
+    int exp_type = getenv("EXP_TYPE") ? atoi(getenv("EXP_TYPE")) : 1;
+
     double x[1] = {0.0}; // Initial water level n(0) = 0 m
-    double setpoint = 20.0;
+    double setpoint = 0.0;
     double t = 0.0;
     double dt = 0.001;
 
@@ -34,6 +37,8 @@ int main() {
     double kp = 100.0;
 
     while(1) {
+        setpoint = get_tank_setpoint(exp_type, t);
+
         error = setpoint - x[0];
 
         s_n = call_fuzzy_controller(error * ki, (error - prev_error) * kp);

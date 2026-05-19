@@ -2,6 +2,7 @@
 #include <unistd.h>
 #include "../common/include/network.h"
 #include "../common/include/solver.h"
+#include "../common/include/setpoint.h"
 
 // State-Space Model
 void motor_dynamics(double t, double *x, double u, double *dxdt) {
@@ -20,8 +21,10 @@ void motor_dynamics(double t, double *x, double u, double *dxdt) {
 }
 
 int main() {
+    int exp_type = getenv("EXP_TYPE") ? atoi(getenv("EXP_TYPE")) : 1;
+
     double x[2] = {0.0, 0.0}; // Initial State
-    double setpoint = 104.72;  // rad/s (1000 RPM))
+    double setpoint = 0.0;
     double t = 0.0;
     double dt = 0.00001;
 
@@ -34,6 +37,8 @@ int main() {
     double kp = 0.5;
 
     while(1) {
+        setpoint = get_dc_motor_setpoint(exp_type, t);
+
         error = setpoint - x[0];
 
         s_n = call_fuzzy_controller(error * ki, (error - prev_error) * kp);
