@@ -1,0 +1,80 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: collector-sa
+  namespace: default
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: collector-role
+rules:
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: collector-binding
+subjects:
+- kind: ServiceAccount
+  name: collector-sa
+  namespace: default
+roleRef:
+  kind: ClusterRole
+  name: collector-role
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: fastcollector
+  namespace: default
+spec:
+  selector:
+    matchLabels:
+      app: fastcollector
+  template:
+    metadata:
+      labels:
+        app: fastcollector
+    spec:
+      hostPID: true
+      serviceAccountName: collector-sa
+      containers:
+      - name: fastcollector
+        image: ramonvfs/fastcollector:v1
+        securityContext:
+          privileged: true
+        imagePullPolicy: Always
+        env:
+        - name: APP_LABEL
+          value: "app=fuzzy-ctrl" 
+        - name: NODE_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+        - name: FILE_NAME
+          value: metrics.csv
+        volumeMounts:
+        - name: cgroup-volume
+          mountPath: /sys/fs/cgroup
+          readOnly: true
+        - name: proc-folder
+          mountPath: /host/proc
+          readOnly: true
+        - name: dataset-storage
+          mountPath: /var/log/ia-data
+      volumes:
+      - name: cgroup-volume
+        hostPath:
+          path: /sys/fs/cgroup 
+          type: Directory
+      - name: proc-folder
+        hostPath:
+          path: /proc
+      - name: dataset-storage
+        hostPath:
+          path: /tmp/dataset
+          type: DirectoryOrCreate

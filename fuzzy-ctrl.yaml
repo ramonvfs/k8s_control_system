@@ -17,7 +17,7 @@ spec:
     spec:
       containers:
       - name: fuzzy-ctrl-cpp
-        image: ramonvfs/fuzzy-ctrl-cpp:v1
+        image: ramonvfs/fuzzy-ctrl-cpp:v2
         imagePullPolicy: Always
         ports:
         - containerPort: 5000
