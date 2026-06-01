@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <stdlib.h>
 #include <unistd.h>
 #include "../common/include/network.h"
 #include "../common/include/solver.h"
@@ -13,9 +14,7 @@ void car_dynamics(double t, double *x, double u, double *dxdt) {
     dxdt[0] = (u - b * x[0]) / m;
 }
 
-int main() {
-    int exp_type = getenv("EXP_TYPE") ? atoi(getenv("EXP_TYPE")) : 1;
-
+int main(int argc, char *argv[]) {
     double x[1] = {0.0};
     double setpoint = 0.0;
     double t = 0.0;
@@ -29,9 +28,11 @@ int main() {
     double ki = (1.0 / 180.0);
     double kp = 5.0;
 
-    while(1) {
-        setpoint = get_car_setpoint(exp_type, t);
+    if (argc > 1) {
+        setpoint = atof(argv[1]);
+    }
 
+    while(1) {
         error = setpoint - x[0];
 
         s_n = call_fuzzy_controller(error * ki, (error - prev_error) * kp);
@@ -46,8 +47,6 @@ int main() {
 
         rk4(car_dynamics, t, x, v_n, dt, 1);
         t += dt;
-
-        printf("T: %6.2f | Vel: %6.2f km/h | Er: %6.2f | U: %7.2f N\n", t, x[0] * 3.6, error, v_n);
 
         usleep(10000);
     }

@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <stdlib.h>
 #include <math.h>
 #include <unistd.h>
 #include "../common/include/network.h"
@@ -20,9 +21,7 @@ void tank_dynamics(double t, double *x, double u, double *dxdt) {
     dxdt[0] = (qm * u - Vo * a * sqrt(2 * g * level)) / A;
 }
 
-int main() {
-    int exp_type = getenv("EXP_TYPE") ? atoi(getenv("EXP_TYPE")) : 1;
-
+int main(int argc, char *argv[]) {
     double x[1] = {0.0}; // Initial water level n(0) = 0 m
     double setpoint = 0.0;
     double t = 0.0;
@@ -36,9 +35,11 @@ int main() {
     double ki = (1.0 / 30.0);
     double kp = 100.0;
 
-    while(1) {
-        setpoint = get_tank_setpoint(exp_type, t);
+    if (argc > 1) {
+        setpoint = atof(argv[1]);
+    }
 
+    while(1) {
         error = setpoint - x[0];
 
         s_n = call_fuzzy_controller(error * ki, (error - prev_error) * kp);
@@ -56,8 +57,6 @@ int main() {
         if (x[0] < 0) x[0] = 0;
 
         t += dt;
-
-        printf("T: %6.2f | N: %6.2f m | Er: %6.2f | Valv: %6.2f%%\n", t, x[0], error, v_n * 100.0);
 
         usleep(10000);
     }

@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <stdlib.h>
 #include <unistd.h>
 #include "../common/include/network.h"
 #include "../common/include/solver.h"
@@ -20,9 +21,7 @@ void motor_dynamics(double t, double *x, double u, double *dxdt) {
     dxdt[1] = (u - K * x[0] - R * x[1]) / L;
 }
 
-int main() {
-    int exp_type = getenv("EXP_TYPE") ? atoi(getenv("EXP_TYPE")) : 1;
-
+int main(int argc, char *argv[]) {
     double x[2] = {0.0, 0.0}; // Initial State
     double setpoint = 0.0;
     double t = 0.0;
@@ -36,9 +35,11 @@ int main() {
     double ki = (1.0 / 2000.0);
     double kp = 0.5;
 
-    while(1) {
-        setpoint = get_dc_motor_setpoint(exp_type, t);
+    if (argc > 1) {
+        setpoint = atof(argv[1]);
+    }
 
+    while(1) {
         error = setpoint - x[0];
 
         s_n = call_fuzzy_controller(error * ki, (error - prev_error) * kp);
@@ -53,8 +54,6 @@ int main() {
 
         rk4(motor_dynamics, t, x, v_n, dt, 2);
         t += dt;
-
-        printf("T: %6.2f | Vel: %6.2f rad/s | Er: %6.2f | U: %6.2f\n", t, x[0], error, v_n);
         
         usleep(10000);
     }
