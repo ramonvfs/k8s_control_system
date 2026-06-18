@@ -1,6 +1,6 @@
 CC = gcc
 CFLAGS = -Wall -Wextra -Icommon/include -O2
-LDFLAGS = -lcurl -lm
+LDFLAGS = -lcurl -lm -pthread
 
 COMMON_SRC = common/src/network.c common/src/solver.c
 COMMON_OBJ = $(COMMON_SRC:.c=.o)

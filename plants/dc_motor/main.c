@@ -1,18 +1,29 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <pthread.h>
+#include <time.h>
 #include "../common/include/network.h"
 #include "../common/include/solver.h"
 #include "../common/include/setpoint.h"
 
+typedef struct {
+    double x[2]; 
+    double u;
+    double setpoint;
+    pthread_mutex_t mutex;
+} shared_data;
+
+shared_data shared;
+
 // State-Space Model
 void motor_dynamics(double t, double *x, double u, double *dxdt) {
-    double R = 0.371;    // Eletric Resistance (Ohms)
-    double L = 0.000161;    // Eletric Inductance (H)
-    double J = 0.0001460;   // Moment of Inertia of The Rotor (kg.m^2)
-    double b = 0.0000214;    // Motor Viscous Friction Constant (N.m.s)
-    double K = 0.116;   // Motor Torque Constant (N.m/Amp)
-    double tc = 1.0;    // Torque required to move the load (N.m)
+    double R = 0.2;       // Electric Resistance (Ohms)
+    double L = 0.1;    // Electric Inductance (H)
+    double J = 0.05;   // Moment of Inertia of The Rotor (kg.m^2)
+    double b = 0.001;   // Motor Viscous Friction Constant (N.m.s)
+    double K = 0.5;       // Motor Torque Constant (N.m/Amp)
+    double tc = 0.2;        // Torque required to move the load (N.m)
 
     // dxdt[0] -> Angular Acceleration
     dxdt[0] = (K * x[1] - b * x[0] - tc) / J;
@@ -21,42 +32,92 @@ void motor_dynamics(double t, double *x, double u, double *dxdt) {
     dxdt[1] = (u - K * x[0] - R * x[1]) / L;
 }
 
-int main(int argc, char *argv[]) {
-    double x[2] = {0.0, 0.0}; // Initial State
-    double setpoint = 0.0;
+void* simulation_thread(void* arg) {
+    double dt = 0.01; // 10 ms
     double t = 0.0;
-    double dt = 0.00001;
+    double local_u = 0.0;
+    double local_x[2] = {0.0, 0.0}; 
 
-    double v_n = 0.0;           // Control Signal
+    struct timespec next_cycle;
+    clock_gettime(CLOCK_MONOTONIC, &next_cycle);
+
+    while(1) {
+        pthread_mutex_lock(&shared.mutex);
+        local_u = shared.u;
+        pthread_mutex_unlock(&shared.mutex);
+
+        rk4(motor_dynamics, t, local_x, local_u, dt, 2);
+        t += dt;
+
+        pthread_mutex_lock(&shared.mutex);
+        shared.x[0] = local_x[0];
+        shared.x[1] = local_x[1];
+        pthread_mutex_unlock(&shared.mutex);
+
+        next_cycle.tv_nsec += (long)(dt * 1000000000.0);
+        if (next_cycle.tv_nsec >= 1000000000L) {
+            next_cycle.tv_sec += 1;
+            next_cycle.tv_nsec -= 1000000000L;
+        }
+        clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &next_cycle, NULL);
+    }
+    return NULL;
+}
+
+void* network_thread(void* arg) {
+    double current_state = 0.0;
     double error = 0;
     double prev_error = 0;
+    double v_n = 0.0;
     double s_n = 0.0;
 
     double ki = (1.0 / 2000.0);
     double kp = 0.5;
 
-    if (argc > 1) {
-        setpoint = atof(argv[1]);
-    }
-
     while(1) {
-        error = setpoint - x[0];
+        pthread_mutex_lock(&shared.mutex);
+        current_state = shared.x[0];
+        pthread_mutex_unlock(&shared.mutex);
+
+        error = shared.setpoint - current_state;
 
         s_n = call_fuzzy_controller(error * ki, (error - prev_error) * kp);
 
         v_n = v_n + s_n;
-
-        // Saturation (Max Motor Voltage)
         if (v_n > 36.0) v_n = 36.0;
         if (v_n < -36.0) v_n = -36.0;
-
         prev_error = error;
 
-        rk4(motor_dynamics, t, x, v_n, dt, 2);
-        t += dt;
-        
-        usleep(10000);
+        pthread_mutex_lock(&shared.mutex);
+        shared.u = v_n;
+        pthread_mutex_unlock(&shared.mutex);
+    }
+    return NULL;
+}
+
+int main(int argc, char *argv[]) {
+    shared.x[0] = 0.0;
+    shared.x[1] = 0.0;
+    shared.u = 0.0;
+    shared.setpoint = 50.0;
+
+    if (argc > 1) {
+        shared.setpoint = atof(argv[1]);
     }
 
+    if (pthread_mutex_init(&shared.mutex, NULL) != 0) {
+        fprintf(stderr, "Mutex init failed\n");
+        return 1;
+    }
+
+    pthread_t thread_sim, thread_net;
+
+    pthread_create(&thread_sim, NULL, simulation_thread, NULL);
+    pthread_create(&thread_net, NULL, network_thread, NULL);
+
+    pthread_join(thread_sim, NULL);
+    pthread_join(thread_net, NULL);
+
+    pthread_mutex_destroy(&shared.mutex);
     return 0;
 }

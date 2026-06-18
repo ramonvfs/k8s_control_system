@@ -1,9 +1,20 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <pthread.h>
+#include <time.h>
 #include "../common/include/network.h"
 #include "../common/include/solver.h"
 #include "../common/include/setpoint.h"
+
+typedef struct {
+    double x[1];
+    double u;
+    double setpoint;
+    pthread_mutex_t mutex;
+} shared_data;
+
+shared_data shared;
 
 // State-Space Model
 void car_dynamics(double t, double *x, double u, double *dxdt) {
@@ -14,42 +25,90 @@ void car_dynamics(double t, double *x, double u, double *dxdt) {
     dxdt[0] = (u - b * x[0]) / m;
 }
 
-int main(int argc, char *argv[]) {
-    double x[1] = {0.0};
-    double setpoint = 0.0;
+void* simulation_thread(void* arg) {
+    double dt = 0.01; // 10 ms
     double t = 0.0;
-    double dt = 0.01;
+    double local_u = 0.0;
+    double local_x[1] = {0.0};
 
-    double v_n = 0.0;           // Control Signal
-    double error = 0;
-    double prev_error = 0;
+    struct timespec next_cycle;
+    clock_gettime(CLOCK_MONOTONIC, &next_cycle);
+
+    while (1) {
+        pthread_mutex_lock(&shared.mutex);
+        local_u = shared.u;
+        pthread_mutex_unlock(&shared.mutex);
+
+        rk4(car_dynamics, t, local_x, local_u, dt, 1);
+        t += dt;
+
+        pthread_mutex_lock(&shared.mutex);
+        shared.x[0] = local_x[0];
+        pthread_mutex_unlock(&shared.mutex);
+
+        next_cycle.tv_nsec += (long)(dt * 1000000000.0);
+        if (next_cycle.tv_nsec >= 1000000000L) {
+            next_cycle.tv_sec += 1;
+            next_cycle.tv_nsec -= 1000000000L;
+        }
+        clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &next_cycle, NULL);
+    }
+    return NULL;
+}
+
+void* network_thread(void* arg) {
+    double current_state = 0.0;
+    double error = 0.0;
+    double prev_error = 0.0;
+    double v_n = 0.0;
     double s_n = 0.0;
 
     double ki = (1.0 / 180.0);
     double kp = 5.0;
 
-    if (argc > 1) {
-        setpoint = atof(argv[1]);
-    }
+    while (1) {
+        pthread_mutex_lock(&shared.mutex);
+        current_state = shared.x[0];
+        pthread_mutex_unlock(&shared.mutex);
 
-    while(1) {
-        error = setpoint - x[0];
+        error = shared.setpoint - current_state;
 
         s_n = call_fuzzy_controller(error * ki, (error - prev_error) * kp);
 
         v_n = v_n + s_n;
-
-         // Saturation
         if (v_n > 8000.0) v_n = 8000.0; 
         if (v_n < -4000.0) v_n = -4000.0;
-
         prev_error = error;
 
-        rk4(car_dynamics, t, x, v_n, dt, 1);
-        t += dt;
+        pthread_mutex_lock(&shared.mutex);
+        shared.u = v_n;
+        pthread_mutex_unlock(&shared.mutex);
+    }
+    return NULL;
+}
 
-        usleep(10000);
+int main(int argc, char *argv[]) {
+    shared.x[0] = 0.0;
+    shared.u = 0.0;
+    shared.setpoint = 20.0;
+    
+    if (argc > 1) {
+        shared.setpoint = atof(argv[1]);
     }
 
+    if (pthread_mutex_init(&shared.mutex, NULL) != 0) {
+        fprintf(stderr, "Mutex init failed\n");
+        return 1;
+    }
+
+    pthread_t thread_sim, thread_net;
+
+    pthread_create(&thread_sim, NULL, simulation_thread, NULL);
+    pthread_create(&thread_net, NULL, network_thread, NULL);
+
+    pthread_join(thread_sim, NULL);
+    pthread_join(thread_net, NULL);
+
+    pthread_mutex_destroy(&shared.mutex);
     return 0;
 }
