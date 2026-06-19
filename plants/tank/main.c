@@ -79,6 +79,22 @@ void* network_thread(void* arg) {
     double ki = (1.0 / 30.0);
     double kp = 100.0;
 
+    struct timespec req_start;
+    struct timespec req_end;
+    struct timespec program_start;
+    double rtt_seconds;
+    double timestamp = 0.0;
+
+    FILE *csv_file = fopen("tank_network_log.csv", "w");
+    if (csv_file == NULL) {
+        fprintf(stderr, "Error opening CSV file for writing.\n");
+        return NULL;
+    }
+
+    fprintf(csv_file, "Timestamp(s),RTT(ms),Level(m),ControlInput(0-1)\n");
+
+    clock_gettime(CLOCK_MONOTONIC, &program_start);
+
     while (1) {
         pthread_mutex_lock(&shared.mutex);
         current_state = shared.x[0];
@@ -86,7 +102,18 @@ void* network_thread(void* arg) {
 
         error = shared.setpoint - current_state;
 
+        clock_gettime(CLOCK_MONOTONIC, &req_start);
+
         s_n = call_fuzzy_controller(error * ki, (error - prev_error) * kp);
+
+        clock_gettime(CLOCK_MONOTONIC, &req_end);
+
+        rtt_seconds = (req_end.tv_sec - req_start.tv_sec) + 
+                      (req_end.tv_nsec - req_start.tv_nsec) / 1000000000.0;
+        double rtt_ms = rtt_seconds * 1000.0;
+
+        timestamp = (req_start.tv_sec - program_start.tv_sec) + 
+                    (req_start.tv_nsec - program_start.tv_nsec) / 1000000000.0;
 
         v_n = v_n + s_n;
         if (v_n > 1.0) v_n = 1.0; 
@@ -96,7 +123,12 @@ void* network_thread(void* arg) {
         pthread_mutex_lock(&shared.mutex);
         shared.u = v_n;
         pthread_mutex_unlock(&shared.mutex);
+
+        fprintf(csv_file, "%.3f,%.4f,%.4f,%.4f\n", timestamp, rtt_ms, current_state, v_n);
+        fflush(csv_file);
     }
+
+    fclose(csv_file);
     return NULL;
 }
 
