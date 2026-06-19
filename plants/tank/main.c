@@ -12,6 +12,7 @@ typedef struct {
     double x[1];
     double u;
     double setpoint;
+    int exp_type;
     char csv_filename[256];
     pthread_mutex_t mutex;
 } shared_data;
@@ -44,8 +45,14 @@ void* simulation_thread(void*arg) {
     double t = 0.0;
     double local_u = 0.0;
     double local_x[1] = {0.0};
-    struct timespec next_cycle;
+    double current_setpoint = 0.0;
+    int local_exp_type = 1;
 
+    pthread_mutex_lock(&shared.mutex);
+    local_exp_type = shared.exp_type;
+    pthread_mutex_unlock(&shared.mutex);
+
+    struct timespec next_cycle;
     clock_gettime(CLOCK_MONOTONIC, &next_cycle);
 
     while (1) {
@@ -56,8 +63,11 @@ void* simulation_thread(void*arg) {
         rk4(tank_dynamics, t, local_x, local_u, dt, 1);
         t += dt;
 
+        current_setpoint = get_tank_setpoint(local_exp_type, t);
+
         pthread_mutex_lock(&shared.mutex);
         shared.x[0] = local_x[0];
+        shared.setpoint = current_setpoint;
         pthread_mutex_unlock(&shared.mutex);
 
         next_cycle.tv_nsec += (long)(dt * 1000000000.0);
@@ -72,6 +82,7 @@ void* simulation_thread(void*arg) {
 
 void* network_thread(void* arg) {
     double current_state = 0.0;
+    double local_setpoint = 0.0;
     double error = 0.0;
     double prev_error = 0.0;
     double v_n = 0.0;
@@ -92,16 +103,17 @@ void* network_thread(void* arg) {
         return NULL;
     }
 
-    fprintf(csv_file, "Timestamp(s),RTT(ms),Level(m),ControlInput(0-1)\n");
+    fprintf(csv_file, "Timestamp(s),RTT(ms),Setpoint(m),Level(m),ControlInput(0-1)\n");
 
     clock_gettime(CLOCK_MONOTONIC, &program_start);
 
     while (1) {
         pthread_mutex_lock(&shared.mutex);
         current_state = shared.x[0];
+        local_setpoint = shared.setpoint;
         pthread_mutex_unlock(&shared.mutex);
 
-        error = shared.setpoint - current_state;
+        error = local_setpoint - current_state;
 
         clock_gettime(CLOCK_MONOTONIC, &req_start);
 
@@ -125,7 +137,7 @@ void* network_thread(void* arg) {
         shared.u = v_n;
         pthread_mutex_unlock(&shared.mutex);
 
-        fprintf(csv_file, "%.3f,%.4f,%.4f,%.4f\n", timestamp, rtt_ms, current_state, v_n);
+        fprintf(csv_file, "%.3f,%.4f,%.2f,%.4f,%.4f\n", timestamp, rtt_ms, local_setpoint, current_state, v_n);
         fflush(csv_file);
     }
 
@@ -136,12 +148,12 @@ void* network_thread(void* arg) {
 int main(int argc, char *argv[]) {
     shared.x[0] = 0.0;
     shared.u = 0.0;
-    shared.setpoint = 20.0;
+    shared.exp_type = 1;
 
     snprintf(shared.csv_filename, sizeof(shared.csv_filename), "tank_network_log.csv");
     
     if (argc > 1) {
-        shared.setpoint = atof(argv[1]);
+        shared.exp_type = atoi(argv[1]);
     }
 
     if (argc > 2) {
