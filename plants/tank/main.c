@@ -21,8 +21,8 @@ shared_data shared;
 
 void tank_dynamics(double t, double *x, double u, double *dxdt) {
     double A = 1.0;      // Tank cross-sectional area (m2)
-    double a = 0.01;     // Outlet tube cross-sectional area (m2)
-    double qm = 0.1;     // Maximum pump flow rate (m3/s)
+    double a = 0.1;     // Outlet tube cross-sectional area (m2)
+    double qm = 2.0;     // Maximum pump flow rate (m3/s)
     double g = 9.8;     // Acceleration due to gravity (m/s2)
     double Vo = 0.5;     // Outlet valve opening (0.0 to 1.0)
     double H_max = 30.0; // Maximum water level (m)
