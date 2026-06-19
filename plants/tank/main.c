@@ -12,6 +12,7 @@ typedef struct {
     double x[1];
     double u;
     double setpoint;
+    char csv_filename[256];
     pthread_mutex_t mutex;
 } shared_data;
 
@@ -85,7 +86,7 @@ void* network_thread(void* arg) {
     double rtt_seconds;
     double timestamp = 0.0;
 
-    FILE *csv_file = fopen("tank_network_log.csv", "w");
+    FILE *csv_file = fopen(shared.csv_filename, "w");
     if (csv_file == NULL) {
         fprintf(stderr, "Error opening CSV file for writing.\n");
         return NULL;
@@ -136,9 +137,15 @@ int main(int argc, char *argv[]) {
     shared.x[0] = 0.0;
     shared.u = 0.0;
     shared.setpoint = 20.0;
+
+    snprintf(shared.csv_filename, sizeof(shared.csv_filename), "tank_network_log.csv");
     
     if (argc > 1) {
         shared.setpoint = atof(argv[1]);
+    }
+
+    if (argc > 2) {
+        snprintf(shared.csv_filename, sizeof(shared.csv_filename), "%s", argv[2]);
     }
 
     if (pthread_mutex_init(&shared.mutex, NULL) != 0) {
