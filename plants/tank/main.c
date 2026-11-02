@@ -1,178 +1,60 @@
-#include <stdio.h>
-#include <stdlib.h>
-#include <unistd.h>
-#include <pthread.h>
-#include <time.h>
+/*
+ * Single water tank with pump inflow and gravity (Torricelli) outflow.
+ *
+ *   A dh/dt = qm u - Vo a sqrt(2 g h)
+ *
+ * State x[0] = h (m); input u in [0, 1] = pump command (inflow = qm u).
+ * The level is clamped at H_max: above it, net inflow is discarded.
+ */
 #include <math.h>
-#include "../common/include/network.h"
-#include "../common/include/solver.h"
-#include "../common/include/setpoint.h"
 
-typedef struct {
-    double x[1];
-    double u;
-    double setpoint;
-    int exp_type;
-    char csv_filename[256];
-    pthread_mutex_t mutex;
-} shared_data;
+#include "plant.h"
 
-shared_data shared;
+#define TANK_A     1.0   /* Tank cross-sectional area (m^2) */
+#define TANK_a     0.1   /* Outlet pipe cross-sectional area (m^2) */
+#define TANK_QM    2.0   /* Maximum pump flow rate (m^3/s) */
+#define TANK_G     9.8   /* Gravity (m/s^2) */
+#define TANK_VO    0.5   /* Outlet valve opening (0.0 to 1.0) */
+#define TANK_H_MAX 30.0  /* Maximum water level (m) */
 
-void tank_dynamics(double t, double *x, double u, double *dxdt) {
-    double A = 1.0;      // Tank cross-sectional area (m2)
-    double a = 0.1;     // Outlet tube cross-sectional area (m2)
-    double qm = 2.0;     // Maximum pump flow rate (m3/s)
-    double g = 9.8;     // Acceleration due to gravity (m/s2)
-    double Vo = 0.5;     // Outlet valve opening (0.0 to 1.0)
-    double H_max = 30.0; // Maximum water level (m)
-
-    // x[0] represents the water level n(t)
-    // Ensure level is not negative due to numerical errors in sqrt
+static void tank_dynamics(double t, double *x, double u, double *dxdt) {
+    (void)t;
+    /* Avoid sqrt of a negative level caused by numerical error */
     double level = (x[0] > 0) ? x[0] : 0;
+    double inflow = TANK_QM * u;
+    double outflow = TANK_VO * TANK_a * sqrt(2 * TANK_G * level);
 
-    if (level >= H_max && (qm * u) > (Vo * a * sqrt(2 * g * level))) {
+    if (level >= TANK_H_MAX && inflow > outflow) {
         dxdt[0] = 0.0;
         return;
     }
-
-    // dxdt[0] -> Derivative of the level (dn/dt)
-    dxdt[0] = (qm * u - Vo * a * sqrt(2 * g * level)) / A;
+    /* dxdt[0] -> derivative of the level */
+    dxdt[0] = (inflow - outflow) / TANK_A;
 }
 
-void* simulation_thread(void*arg) {
-    double dt = 0.01; // 10 ms
-    double t = 0.0;
-    double local_u = 0.0;
-    double local_x[1] = {0.0};
-    double current_setpoint = 0.0;
-    int local_exp_type = 1;
-
-    pthread_mutex_lock(&shared.mutex);
-    local_exp_type = shared.exp_type;
-    pthread_mutex_unlock(&shared.mutex);
-
-    struct timespec next_cycle;
-    clock_gettime(CLOCK_MONOTONIC, &next_cycle);
-
-    while (1) {
-        pthread_mutex_lock(&shared.mutex);
-        local_u = shared.u;
-        pthread_mutex_unlock(&shared.mutex);
-
-        rk4(tank_dynamics, t, local_x, local_u, dt, 1);
-        t += dt;
-
-        current_setpoint = get_tank_setpoint(local_exp_type, t);
-
-        pthread_mutex_lock(&shared.mutex);
-        shared.x[0] = local_x[0];
-        shared.setpoint = current_setpoint;
-        pthread_mutex_unlock(&shared.mutex);
-
-        next_cycle.tv_nsec += (long)(dt * 1000000000.0);
-        if (next_cycle.tv_nsec >= 1000000000L) {
-            next_cycle.tv_sec += 1;
-            next_cycle.tv_nsec -= 1000000000L;
-        }
-        clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &next_cycle, NULL);
-    }
-    return NULL;
+static double tank_setpoint(int exp_type, double t) {
+    if (exp_type == 1) return 20.0;
+    if (t <= 50.0)     return 20.0;
+    if (t <= 100.0)    return 10.0;
+    if (t <= 150.0)    return 25.0;
+    return 15.0;
 }
 
-void* network_thread(void* arg) {
-    double current_state = 0.0;
-    double local_setpoint = 0.0;
-    double error = 0.0;
-    double prev_error = 0.0;
-    double v_n = 0.0;
-    double s_n = 0.0;
-
-    double ki = (1.0 / 30.0);
-    double kp = 100.0;
-
-    struct timespec req_start;
-    struct timespec req_end;
-    struct timespec program_start;
-    double rtt_seconds;
-    double timestamp = 0.0;
-
-    FILE *csv_file = fopen(shared.csv_filename, "w");
-    if (csv_file == NULL) {
-        fprintf(stderr, "Error opening CSV file for writing.\n");
-        return NULL;
-    }
-
-    fprintf(csv_file, "Timestamp(s),RTT(ms),Setpoint(m),Level(m),ControlInput(0-1)\n");
-
-    clock_gettime(CLOCK_MONOTONIC, &program_start);
-
-    while (1) {
-        pthread_mutex_lock(&shared.mutex);
-        current_state = shared.x[0];
-        local_setpoint = shared.setpoint;
-        pthread_mutex_unlock(&shared.mutex);
-
-        error = local_setpoint - current_state;
-
-        clock_gettime(CLOCK_MONOTONIC, &req_start);
-
-        s_n = call_fuzzy_controller(error * ki, (error - prev_error) * kp);
-
-        clock_gettime(CLOCK_MONOTONIC, &req_end);
-
-        rtt_seconds = (req_end.tv_sec - req_start.tv_sec) + 
-                      (req_end.tv_nsec - req_start.tv_nsec) / 1000000000.0;
-        double rtt_ms = rtt_seconds * 1000.0;
-
-        timestamp = (req_start.tv_sec - program_start.tv_sec) + 
-                    (req_start.tv_nsec - program_start.tv_nsec) / 1000000000.0;
-
-        v_n = v_n + s_n;
-        if (v_n > 1.0) v_n = 1.0; 
-        if (v_n < 0.0) v_n = 0.0;
-        prev_error = error;
-
-        pthread_mutex_lock(&shared.mutex);
-        shared.u = v_n;
-        pthread_mutex_unlock(&shared.mutex);
-
-        fprintf(csv_file, "%.3f,%.4f,%.2f,%.4f,%.4f\n", timestamp, rtt_ms, local_setpoint, current_state, v_n);
-        fflush(csv_file);
-    }
-
-    fclose(csv_file);
-    return NULL;
-}
+static const plant_model_t tank = {
+    .name = "tank",
+    .state_dim = 1,
+    .output_index = 0,
+    .dt = 0.01,
+    .dynamics = tank_dynamics,
+    .setpoint = tank_setpoint,
+    .ki = 1.0 / 30.0,
+    .kp = 100.0,
+    .u_min = 0.0,
+    .u_max = 1.0,
+    .output_desc = "Water level (m)",
+    .input_desc = "Pump command (0-1)",
+};
 
 int main(int argc, char *argv[]) {
-    shared.x[0] = 0.0;
-    shared.u = 0.0;
-    shared.exp_type = 1;
-
-    snprintf(shared.csv_filename, sizeof(shared.csv_filename), "tank_network_log.csv");
-    
-    if (argc > 1) {
-        shared.exp_type = atoi(argv[1]);
-    }
-
-    if (argc > 2) {
-        snprintf(shared.csv_filename, sizeof(shared.csv_filename), "%s", argv[2]);
-    }
-
-    if (pthread_mutex_init(&shared.mutex, NULL) != 0) {
-        fprintf(stderr, "Mutex init failed\n");
-        return 1;
-    }
-
-    pthread_t thread_sim, thread_net;
-
-    pthread_create(&thread_sim, NULL, simulation_thread, NULL);
-    pthread_create(&thread_net, NULL, network_thread, NULL);
-
-    pthread_join(thread_sim, NULL);
-    pthread_join(thread_net, NULL);
-
-    pthread_mutex_destroy(&shared.mutex);
-    return 0;
+    return plant_run(&tank, argc, argv);
 }

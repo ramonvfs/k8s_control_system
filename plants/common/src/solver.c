@@ -1,4 +1,4 @@
-#include "./solver.h"
+#include "solver.h"
 
 void rk4(void (*f)(double, double*, double, double*), double t, double *x, double u, double dt, int dim) {
     double k1[dim], k2[dim], k3[dim], k4[dim], xtemp[dim];

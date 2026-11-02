@@ -1,174 +1,51 @@
-#include <stdio.h>
-#include <stdlib.h>
-#include <unistd.h>
-#include <pthread.h>
-#include <time.h>
-#include "../common/include/network.h"
-#include "../common/include/solver.h"
-#include "../common/include/setpoint.h"
+/*
+ * Armature-controlled DC motor with constant load torque.
+ *
+ *   J dw/dt = K i - b w - tc
+ *   L di/dt = V - K w - R i
+ *
+ * States x[0] = w (rad/s), x[1] = i (A); input V = armature voltage (V).
+ */
+#include "plant.h"
 
-typedef struct {
-    double x[2]; 
-    double u;
-    double setpoint;
-    int exp_type;
-    char csv_filename[256];
-    pthread_mutex_t mutex;
-} shared_data;
+#define MOTOR_R  0.2    /* Armature resistance (Ohm) */
+#define MOTOR_L  0.1    /* Armature inductance (H) */
+#define MOTOR_J  0.05   /* Rotor moment of inertia (kg.m^2) */
+#define MOTOR_B  0.001  /* Viscous friction coefficient (N.m.s) */
+#define MOTOR_K  0.5    /* Torque / back-EMF constant (N.m/A = V.s/rad) */
+#define MOTOR_TC 0.2    /* Load torque (N.m) */
 
-shared_data shared;
-
-// State-Space Model
-void motor_dynamics(double t, double *x, double u, double *dxdt) {
-    double R = 0.2;       // Electric Resistance (Ohms)
-    double L = 0.1;    // Electric Inductance (H)
-    double J = 0.05;   // Moment of Inertia of The Rotor (kg.m^2)
-    double b = 0.001;   // Motor Viscous Friction Constant (N.m.s)
-    double K = 0.5;       // Motor Torque Constant (N.m/Amp)
-    double tc = 0.2;        // Torque required to move the load (N.m)
-
-    // dxdt[0] -> Angular Acceleration
-    dxdt[0] = (K * x[1] - b * x[0] - tc) / J;
-
-    // dxdt[1] -> Derivative of Current
-    dxdt[1] = (u - K * x[0] - R * x[1]) / L;
+static void motor_dynamics(double t, double *x, double u, double *dxdt) {
+    (void)t;
+    /* dxdt[0] -> angular acceleration */
+    dxdt[0] = (MOTOR_K * x[1] - MOTOR_B * x[0] - MOTOR_TC) / MOTOR_J;
+    /* dxdt[1] -> derivative of the armature current */
+    dxdt[1] = (u - MOTOR_K * x[0] - MOTOR_R * x[1]) / MOTOR_L;
 }
 
-void* simulation_thread(void* arg) {
-    double dt = 0.01; // 10 ms
-    double t = 0.0;
-    double local_u = 0.0;
-    double local_x[2] = {0.0, 0.0};
-    double current_setpoint = 0.0;
-    int local_exp_type = 1;
-
-    pthread_mutex_lock(&shared.mutex);
-    local_exp_type = shared.exp_type;
-    pthread_mutex_unlock(&shared.mutex);
-
-    struct timespec next_cycle;
-    clock_gettime(CLOCK_MONOTONIC, &next_cycle);
-
-    while(1) {
-        pthread_mutex_lock(&shared.mutex);
-        local_u = shared.u;
-        pthread_mutex_unlock(&shared.mutex);
-
-        rk4(motor_dynamics, t, local_x, local_u, dt, 2);
-        t += dt;
-
-        current_setpoint = get_dc_motor_setpoint(local_exp_type, t);
-
-        pthread_mutex_lock(&shared.mutex);
-        shared.x[0] = local_x[0];
-        shared.x[1] = local_x[1];
-        shared.setpoint = current_setpoint;
-        pthread_mutex_unlock(&shared.mutex);
-
-        next_cycle.tv_nsec += (long)(dt * 1000000000.0);
-        if (next_cycle.tv_nsec >= 1000000000L) {
-            next_cycle.tv_sec += 1;
-            next_cycle.tv_nsec -= 1000000000L;
-        }
-        clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &next_cycle, NULL);
-    }
-    return NULL;
+static double motor_setpoint(int exp_type, double t) {
+    if (exp_type == 1) return 52.36;  /* 500 RPM */
+    if (t <= 10.0)     return 52.36;  /* 500 RPM */
+    if (t <= 20.0)     return 31.42;  /* 300 RPM */
+    if (t <= 30.0)     return 62.83;  /* 600 RPM */
+    return 41.89;                     /* 400 RPM */
 }
 
-void* network_thread(void* arg) {
-    double current_state = 0.0;
-    double local_setpoint = 0.0;
-    double error = 0;
-    double prev_error = 0;
-    double v_n = 0.0;
-    double s_n = 0.0;
-
-    double ki = (1.0 / 2000.0);
-    double kp = 0.5;
-
-    struct timespec req_start;
-    struct timespec req_end;
-    struct timespec program_start;
-    double rtt_seconds;
-    double timestamp = 0.0;
-
-    FILE *csv_file = fopen(shared.csv_filename, "w");
-    if (csv_file == NULL) {
-        fprintf(stderr, "Error opening CSV file for writing.\n");
-        return NULL;
-    }
-
-    fprintf(csv_file, "Timestamp(s),RTT(ms),Setpoint(rad/s),Velocity(rad/s),ControlInput(A)\n");
-
-    clock_gettime(CLOCK_MONOTONIC, &program_start);
-
-    while(1) {
-        pthread_mutex_lock(&shared.mutex);
-        current_state = shared.x[0];
-        local_setpoint = shared.setpoint;
-        pthread_mutex_unlock(&shared.mutex);
-
-        error = local_setpoint - current_state;
-
-        clock_gettime(CLOCK_MONOTONIC, &req_start);
-
-        s_n = call_fuzzy_controller(error * ki, (error - prev_error) * kp);
-
-        clock_gettime(CLOCK_MONOTONIC, &req_end);
-
-        rtt_seconds = (req_end.tv_sec - req_start.tv_sec) + 
-                      (req_end.tv_nsec - req_start.tv_nsec) / 1000000000.0;
-        double rtt_ms = rtt_seconds * 1000.0;
-
-        timestamp = (req_start.tv_sec - program_start.tv_sec) + 
-                    (req_start.tv_nsec - program_start.tv_nsec) / 1000000000.0;
-
-        v_n = v_n + s_n;
-        if (v_n > 36.0) v_n = 36.0;
-        if (v_n < -36.0) v_n = -36.0;
-        prev_error = error;
-
-        pthread_mutex_lock(&shared.mutex);
-        shared.u = v_n;
-        pthread_mutex_unlock(&shared.mutex);
-
-        fprintf(csv_file, "%.3f,%.4f,%.2f,%.4f,%.4f\n", timestamp, rtt_ms, local_setpoint, current_state, v_n);
-        fflush(csv_file);
-    }
-
-    fclose(csv_file);
-    return NULL;
-}
+static const plant_model_t dc_motor = {
+    .name = "dc_motor",
+    .state_dim = 2,
+    .output_index = 0,
+    .dt = 0.01,
+    .dynamics = motor_dynamics,
+    .setpoint = motor_setpoint,
+    .ki = 1.0 / 2000.0,
+    .kp = 0.5,
+    .u_min = -36.0,
+    .u_max = 36.0,
+    .output_desc = "Angular velocity (rad/s)",
+    .input_desc = "Armature voltage (V)",
+};
 
 int main(int argc, char *argv[]) {
-    shared.x[0] = 0.0;
-    shared.x[1] = 0.0;
-    shared.u = 0.0;
-    shared.exp_type = 1;
-
-    snprintf(shared.csv_filename, sizeof(shared.csv_filename), "motor_network_log.csv");
-
-    if (argc > 1) {
-        shared.exp_type = atoi(argv[1]);
-    }
-
-    if (argc > 2) {
-        snprintf(shared.csv_filename, sizeof(shared.csv_filename), "%s", argv[2]);
-    }
-
-    if (pthread_mutex_init(&shared.mutex, NULL) != 0) {
-        fprintf(stderr, "Mutex init failed\n");
-        return 1;
-    }
-
-    pthread_t thread_sim, thread_net;
-
-    pthread_create(&thread_sim, NULL, simulation_thread, NULL);
-    pthread_create(&thread_net, NULL, network_thread, NULL);
-
-    pthread_join(thread_sim, NULL);
-    pthread_join(thread_net, NULL);
-
-    pthread_mutex_destroy(&shared.mutex);
-    return 0;
+    return plant_run(&dc_motor, argc, argv);
 }

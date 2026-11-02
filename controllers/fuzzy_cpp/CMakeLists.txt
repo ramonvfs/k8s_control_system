@@ -43,4 +43,4 @@ target_link_libraries(fuzzy_service
         pthread
 )
 
-target_include_directories(fuzzy_service PRIVATE include)
+target_include_directories(fuzzy_service PRIVATE src)
