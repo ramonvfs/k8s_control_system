@@ -6,7 +6,16 @@ CTRL_CPP_DIR = controllers/fuzzy_cpp
 PLANTS_DIR   = plants
 SCRIPTS_DIR  = scripts
 
-.PHONY: all plants ctrl_cpp setup_py clean help run_ctrl run_car run_dc_motor run_tank help
+# Plant arguments: make run_car EXP=2 CSV=res_car_client1.csv
+EXP ?= 1
+CSV ?=
+
+# Container images
+REGISTRY ?= ramonvfs
+CPP_TAG  ?= v3
+PY_TAG   ?= v1
+
+.PHONY: all plants ctrl_cpp setup_py clean help run_ctrl run_ctrl_py run_car run_dc_motor run_tank docker_cpp docker_py
 
 all: ctrl_cpp plants
 	@echo "$(GREEN)Build complete!$(RESET)"
@@ -29,17 +38,27 @@ run_ctrl:
 	@echo "$(BLUE)Initializing C++ controller...$(RESET)"
 	@./$(CTRL_CPP_DIR)/build/fuzzy_service
 
+run_ctrl_py:
+	@echo "$(BLUE)Initializing Python controller...$(RESET)"
+	@./venv/bin/python controllers/fuzzy_py/control.py
+
 run_car:
 	@echo "$(BLUE)Initializing car simulation...$(RESET)"
-	@/bin/bash -c "source $(SCRIPTS_DIR)/config.env && ./plants/bin/car"
+	@/bin/bash -c "source $(SCRIPTS_DIR)/config.env && ./plants/bin/car $(EXP) $(CSV)"
 
 run_dc_motor:
 	@echo "$(BLUE)Initializing DC motor simulation...$(RESET)"
-	@/bin/bash -c "source $(SCRIPTS_DIR)/config.env && ./plants/bin/dc_motor"
+	@/bin/bash -c "source $(SCRIPTS_DIR)/config.env && ./plants/bin/dc_motor $(EXP) $(CSV)"
 
 run_tank:
 	@echo "$(BLUE)Initializing tank simulation...$(RESET)"
-	@/bin/bash -c "source $(SCRIPTS_DIR)/config.env && ./plants/bin/tank"
+	@/bin/bash -c "source $(SCRIPTS_DIR)/config.env && ./plants/bin/tank $(EXP) $(CSV)"
+
+docker_cpp:
+	docker build -t $(REGISTRY)/fuzzy-ctrl-cpp:$(CPP_TAG) $(CTRL_CPP_DIR)
+
+docker_py:
+	docker build -t $(REGISTRY)/fuzzy-ctrl-py:$(PY_TAG) controllers/fuzzy_py
 
 clean:
 	@echo "$(BLUE)Cleaning everything...$(RESET)"
@@ -53,10 +72,14 @@ help:
 	@echo "  $(GREEN)make plants$(RESET)       - Compile only the plant simulators in C"
 	@echo "  $(GREEN)make ctrl_cpp$(RESET)     - Compile only the C++ controller"
 	@echo "  $(GREEN)make setup_py$(RESET)     - Set up Python environment for fuzzy_py"
+	@echo "  $(GREEN)make docker_cpp$(RESET)   - Build the C++ controller image ($(REGISTRY)/fuzzy-ctrl-cpp:$(CPP_TAG))"
+	@echo "  $(GREEN)make docker_py$(RESET)    - Build the Python controller image ($(REGISTRY)/fuzzy-ctrl-py:$(PY_TAG))"
 	@echo "  $(GREEN)make clean$(RESET)        - Remove all compiled files"
 	@echo ""
 	@echo "$(BLUE)Run Commands:$(RESET)"
 	@echo "  $(GREEN)make run_ctrl$(RESET)     - Start the C++ Fuzzy service"
+	@echo "  $(GREEN)make run_ctrl_py$(RESET)  - Start the Python Fuzzy service (after setup_py)"
+	@echo "  Plant targets accept EXP=<1|2> and CSV=<file>, e.g. make run_car EXP=2 CSV=car.csv"
 	@echo "  $(GREEN)make run_car$(RESET)      - Start car simulation (loads config.env)"
 	@echo "  $(GREEN)make run_dc_motor$(RESET) - Start DC motor simulation (loads config.env)"
 	@echo "  $(GREEN)make run_tank$(RESET)     - Start tank simulation (loads config.env)"

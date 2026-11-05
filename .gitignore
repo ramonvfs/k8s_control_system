@@ -1,0 +1,19 @@
+# Build artifacts
+controllers/fuzzy_cpp/build/
+plants/bin/
+*.o
+
+# Python
+venv/
+__pycache__/
+
+# Experiment outputs (raw datasets are archived outside the repository)
+Results_Exp_*/
+results/
+*.csv
+
+# Reports / private documents
+*.pdf
+
+# Editor
+.vscode/

@@ -2,7 +2,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: fuzzy-ctrl-cpp
-  labels: 
+  labels:
     app: fuzzy-ctrl
     language: cpp
 spec:
@@ -15,17 +15,48 @@ spec:
       labels:
         app: fuzzy-ctrl
     spec:
+      # Time for the pod to flush its CSV log after SIGTERM (scale-down).
+      terminationGracePeriodSeconds: 30
       containers:
       - name: fuzzy-ctrl-cpp
-        image: ramonvfs/fuzzy-ctrl-cpp:v2
+        image: ramonvfs/fuzzy-ctrl-cpp:v3
         imagePullPolicy: Always
         ports:
         - containerPort: 5000
+        env:
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: NODE_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+        - name: LOG_DIR
+          value: /var/log/fuzzy-ctrl
+        # - name: EXP_NAME          # optional tag added to the log file name
+        #   value: "car_M4_K2"
+        # - name: HTTP_THREADS      # worker threads; default max(8, nCPU-1)
+        #   value: "8"
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 5000
+          periodSeconds: 2
         resources:
           requests:
-            cpu: "100m" 
+            cpu: "100m"
           limits:
             cpu: "200m"
+        volumeMounts:
+        - name: ctrl-logs
+          mountPath: /var/log/fuzzy-ctrl
+      volumes:
+      # One CSV per pod is written to this directory on the node that runs it.
+      - name: ctrl-logs
+        hostPath:
+          path: /tmp/dataset/fuzzy-ctrl
+          type: DirectoryOrCreate
 ---
 apiVersion: v1
 kind: Service
