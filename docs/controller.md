@@ -105,7 +105,7 @@ The handler only appends a preformatted line to an in-memory buffer; a backgroun
 | `HTTP_THREADS` | cpp-httplib default | Fixed worker thread count (C++ only). |
 | `RATE_WINDOW_MS` | `1000` | Window of `Request_rate`. |
 
-Log file name: `Result_CSS_<YYYY-MM-DD_HH-MM-SS>[_Exp_<EXP_NAME>]_pod_<POD_NAME>.csv`, where the date is the process start time. A pod writes a single file for its whole lifetime; rows of different experiment rounds are told apart by `IIoT_name` (which, with the default plant `CLIENT_ID`, contains plant, M, K and client index) and by time.
+Log file name: `Result_CSS_<YYYY-MM-DD_HH-MM-SS>[_Exp_<EXP_NAME>]_pod_<POD_NAME>.csv`, where the date is the process start time in UTC. A pod writes a single file for its whole lifetime; rows of different experiment rounds are told apart by `IIoT_name` (which, with the default plant `CLIENT_ID`, contains plant, M, K and client index) and by time.
 
 ## Building
 

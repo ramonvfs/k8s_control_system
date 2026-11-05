@@ -16,7 +16,7 @@ import socket
 import sys
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 
 import numpy as np
 import skfuzzy as fuzzy
@@ -33,7 +33,7 @@ LOG_DIR = os.environ.get("LOG_DIR", ".")
 EXP_NAME = os.environ.get("EXP_NAME", "")
 RATE_WINDOW_S = int(os.environ.get("RATE_WINDOW_MS", "1000")) / 1000.0 or 1.0
 
-START_WALL = datetime.now()
+START_WALL = datetime.now(timezone.utc)
 START_MONO = time.perf_counter()
 
 # --- FUZZY INFERENCE MACHINE (FIM) ---
@@ -153,7 +153,7 @@ app = Flask(__name__)
 @app.route('/control', methods=['POST'])
 def control():
     t_entry = time.perf_counter()
-    t_wall = datetime.now()
+    t_wall = datetime.now(timezone.utc)  # UTC, like the C++ controller and the plants
 
     data = request.get_json(silent=True)
     try:

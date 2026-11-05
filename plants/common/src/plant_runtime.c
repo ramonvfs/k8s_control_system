@@ -69,10 +69,10 @@ static int ts_before(const struct timespec *a, const struct timespec *b) {
     return a->tv_sec < b->tv_sec || (a->tv_sec == b->tv_sec && a->tv_nsec < b->tv_nsec);
 }
 
-/* "YYYY-MM-DD HH:MM:SS.uuuuuu" (local time) */
+/* "YYYY-MM-DD HH:MM:SS.uuuuuu" (UTC, same time base as the controller log) */
 static void format_wall_time(const struct timespec *ts, char *buf, size_t len) {
     struct tm tm;
-    localtime_r(&ts->tv_sec, &tm);
+    gmtime_r(&ts->tv_sec, &tm);
     size_t n = strftime(buf, len, "%Y-%m-%d %H:%M:%S", &tm);
     snprintf(buf + n, len - n, ".%06ld", ts->tv_nsec / 1000);
 }

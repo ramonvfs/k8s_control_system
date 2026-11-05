@@ -8,13 +8,13 @@ Three kinds of files are produced in a run:
 | `Result_CSS_<start>[_Exp_<name>]_pod_<pod>.csv` | Each controller replica | One row per request served. |
 | `metrics*.csv` | `fastcollector` DaemonSet, per node | Periodic CPU / network samples (external tool). |
 
-All files are comma-separated with a single header line. Wall-clock timestamps are in local time (`TimestampFormat_us`) and in microseconds since the Unix epoch (`Timestamp_us`).
+All files are comma-separated with a single header line. Wall-clock timestamps are written both as UTC date/time (`TimestampFormat_us`) and as microseconds since the Unix epoch (`Timestamp_us`); both refer to the same instant. UTC is used everywhere so that files written by hosts and containers with different time zones line up (containers default to UTC, the load generator usually does not). The reference dataset used local time in `TimestampFormat_us`.
 
 ## Plant log (`res_*.csv`)
 
 | Column | Unit | Description |
 |--------|------|-------------|
-| `TimestampFormat_us` | `YYYY-MM-DD HH:MM:SS.ffffff` | Wall-clock time (local) at which the request was issued. |
+| `TimestampFormat_us` | `YYYY-MM-DD HH:MM:SS.ffffff` | Wall-clock time (UTC) at which the request was issued. |
 | `Timestamp_us` | µs since epoch | Same instant, UTC epoch. |
 | `t` | s | Simulation time of the state used in this request (multiple of `dt`). |
 | `seq` | – | Request index, starting at 0. Sent to the controller. |
@@ -53,7 +53,7 @@ Derived quantities:
 
 | Column | Unit | Description |
 |--------|------|-------------|
-| `TimestampFormat_us` | `YYYY-MM-DD HH:MM:SS.ffffff` | Wall-clock time (local) when the request reached the handler. |
+| `TimestampFormat_us` | `YYYY-MM-DD HH:MM:SS.ffffff` | Wall-clock time (UTC) when the request reached the handler. |
 | `Timestamp_us` | µs since epoch | Same instant, UTC epoch. |
 | `ElapsedTime_us` | µs | Time since the controller process started (monotonic). |
 | `Pod` | – | Replica name (`POD_NAME`). |

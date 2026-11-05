@@ -68,13 +68,14 @@ long long us_between(steady::time_point a, steady::time_point b) {
     return std::chrono::duration_cast<std::chrono::microseconds>(b - a).count();
 }
 
-// "YYYY-MM-DD HH:MM:SS.uuuuuu" (local time) for a wall-clock instant.
+// "YYYY-MM-DD HH:MM:SS.uuuuuu" (UTC) for a wall-clock instant. UTC keeps the
+// controller and plant logs comparable regardless of the host/container time zone.
 std::string format_wall(wall::time_point tp, const char* date_fmt = "%Y-%m-%d %H:%M:%S",
                         bool with_us = true) {
     long long us = to_us(tp);
     std::time_t secs = static_cast<std::time_t>(us / 1000000);
     std::tm tm{};
-    localtime_r(&secs, &tm);
+    gmtime_r(&secs, &tm);
     char buf[64];
     size_t n = std::strftime(buf, sizeof(buf), date_fmt, &tm);
     if (with_us) std::snprintf(buf + n, sizeof(buf) - n, ".%06lld", us % 1000000);
