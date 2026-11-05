@@ -1,112 +1,62 @@
-# Arquitetura
+# Architecture
 
-## Componentes
+[Português](pt-BR/architecture.md)
 
-| Componente | Onde roda | Implementação |
-|------------|-----------|---------------|
-| **Plantas** (carro, motor CC, tanque) | Máquina geradora de carga, fora do cluster. Até *M* processos rodam em paralelo, um por cliente simulado. | C, `plants/` |
-| **Controlador fuzzy** (`fuzzy-ctrl-cpp`) | Deployment do Kubernetes com *K* réplicas, exposto por um Service NodePort (`:30005`). | C++17, `controllers/fuzzy_cpp/` |
-| **Coletor de métricas** (`fastcollector`) | DaemonSet, um pod por nó; amostra CPU e rede dos pods do controlador (label `app=fuzzy-ctrl`). | Imagem externa `ramonvfs/fastcollector:v1` |
+## Components
 
-O controlador não guarda estado: cada planta mantém o estado da própria malha (erro anterior, entrada de controle integrada) e envia em cada requisição tudo o que o controlador precisa. Por isso qualquer réplica pode atender qualquer requisição, e é isso que permite o escalonamento horizontal.
+| Component | Runs on | Code |
+|-----------|---------|------|
+| Plants | Load-generator host; *M* processes, one per client | `plants/` |
+| Fuzzy controller | Kubernetes Deployment, *K* replicas, NodePort Service `:30005` | `controllers/fuzzy_cpp/` |
+| Metrics collector | DaemonSet, CPU/network of pods labelled `app=fuzzy-ctrl` | image `ramonvfs/fastcollector:v1` |
 
-## Malha de controle pela rede
+The controller is stateless: each request carries everything needed (the plant keeps the previous error and the integrated control input), so any replica can serve any request.
 
-Cada processo de planta roda duas threads POSIX, que compartilham o estado da planta por meio de um mutex:
+## Control loop
+
+Each plant runs two threads sharing the state through a mutex:
 
 ```
- thread de simulação (período dt = 10 ms, prazos absolutos em CLOCK_MONOTONIC)
-   u   <- shared.u
-   x   <- RK4(x, u, dt)            t <- t + dt
-   r   <- setpoint(exp_type, t)
-   shared.{x, t, setpoint} <- x, t, r
-
- thread de controle (modo livre ou período fixo REQUEST_PERIOD_MS)
-   y, r, t <- shared
-   error   = r - y
-   e       = ki * error
-   ed      = kp * (error - error_anterior)
-   s       = POST /control {e, ed, client_id, seq}     <- ida e volta pela rede
-   v       = sat(v + s, u_min, u_max)
-   shared.u <- v
-   linha no CSV
+ simulation thread (dt = 10 ms)            control thread
+   u <- shared.u                             y, r <- shared
+   x <- RK4(x, u, dt); t += dt               e  = ki·(r − y)
+   r <- setpoint(t)                          ed = kp·((r − y) − error_prev)
+   shared <- x, t, r                         s  = POST /control {e, ed, client_id, seq}
+   sleep until next deadline                 v  = sat(v + s); shared.u <- v; CSV row
 ```
 
-A planta é integrada em tempo real, independentemente da rede. Assim, o atraso de rede aparece como apareceria numa planta física: a entrada aplicada à planta é mantida (segurador de ordem zero) até a próxima resposta chegar. Se uma requisição falha, `s = 0` e a última entrada é mantida.
+The plant is integrated in real time, independently of the network: the input is held until the next reply arrives, and a failed request gives `s = 0`. The simulation thread sleeps until absolute deadlines (`clock_nanosleep`, `TIMER_ABSTIME`), so computation time does not accumulate as drift; late steps run back to back until the simulation catches up.
 
-A espera da thread de simulação é um *sleep* até um instante absoluto (`clock_nanosleep` com `TIMER_ABSTIME`), e não uma espera ativa. Como cada prazo é calculado a partir do anterior, o tempo gasto no cálculo não se acumula como desvio. Se um prazo já passou, a chamada retorna na hora e os passos atrasados rodam em sequência até a simulação alcançar o relógio.
+### Request pacing
 
-### Ritmo das requisições
+- **Free-running** (`REQUEST_PERIOD_MS=0`, default): the next request is sent as soon as the reply arrives; one request in flight per plant.
+- **Fixed period** (`REQUEST_PERIOD_MS=P`): requests start every *P* ms; after an overrun the schedule is re-anchored, without bursts.
 
-- **Modo livre** (`REQUEST_PERIOD_MS=0`, padrão, comportamento dos experimentos originais): a próxima requisição é enviada assim que a resposta anterior chega. Nunca há duas requisições da mesma planta em andamento, e a taxa de amostragem da malha é 1/RTT.
-- **Período fixo** (`REQUEST_PERIOD_MS=P`): as requisições começam a cada *P* ms, em prazos absolutos. Se uma requisição demora mais que *P*, a seguinte começa imediatamente e o cronograma é reiniciado a partir desse instante; os horários perdidos não são compensados com rajadas.
+In free-running mode the loop rate is 1/RTT. Since the FIS output is an increment and `y` only changes every `dt`, the effective integral gain grows with 1/RTT when RTT < dt: closed-loop behaviour then depends on network latency and load. Use `REQUEST_PERIOD_MS=10` (= dt) when control performance must be comparable across configurations.
 
-> **Observação sobre o modo livre.** A saída do FIS é um *incremento* da entrada de controle, e o estado da simulação só muda a cada `dt`. Com RTT < dt, várias requisições veem o mesmo `y`: a primeira leva toda a variação do erro e as seguintes têm `ed = 0`, mas cada uma ainda soma um incremento proporcional a `e`. O ganho integral efetivo por unidade de tempo cresce, portanto, com 1/RTT: a dinâmica em malha fechada passa a depender da latência da rede e da carga do cluster. Numa máquina local (RTT ≈ 0,15 ms, ~66 requisições por passo de 10 ms) a malha do motor CC diverge, tanto com o código original quanto com o refatorado. Quando o desempenho de controle precisa ser comparável entre configurações (M, K), use `REQUEST_PERIOD_MS=10` (= dt); o modo livre serve como teste de vazão e de estresse.
+## Kubernetes
 
-## Implantação no Kubernetes
+- **Deployment**: CPU request 100m, limit 200m. `POD_NAME` and `NODE_NAME` come from the Downward API. Readiness probe `GET /health`. On SIGTERM the pod stops accepting requests and flushes its log (`terminationGracePeriodSeconds: 30`).
+- **Service**: kube-proxy balances **connections**. Plants open one connection per request by default (`HTTP_KEEPALIVE=0`), so their requests spread across replicas; with keep-alive a plant stays on one replica. Because of SNAT the source IP is not meaningful; plants identify themselves with `client_id`.
+- **Logs**: `hostPath` `/tmp/dataset/fuzzy-ctrl`, one file per pod.
 
-O `fuzzy-ctrl.yaml` define:
+### Ephemeral port exhaustion
 
-- **Deployment `fuzzy-ctrl-cpp`**: request de 100m e limite de 200m de CPU por pod. O nome do pod e o nome do nó são injetados pela Downward API (`POD_NAME`, `NODE_NAME`) e usados no log do controlador. Uma readiness probe em `GET /health` mantém réplicas novas fora do Service até que consigam responder. Ao reduzir o número de réplicas, o pod recebe SIGTERM, para de aceitar requisições e grava o log restante dentro de `terminationGracePeriodSeconds` (30 s).
-- **Service `fuzzy-service`** (NodePort 30005 → porta 5000 do contêiner). O kube-proxy balanceia **conexões**, e não requisições HTTP. Como as plantas abrem uma conexão TCP nova por requisição por padrão (`HTTP_KEEPALIVE=0`), as requisições sucessivas de uma planta se distribuem entre as réplicas. Com keep-alive ativado, a planta ficaria na réplica escolhida para a primeira conexão.
-- **Volume de log**: `hostPath` `/tmp/dataset/fuzzy-ctrl` no nó, montado em `/var/log/fuzzy-ctrl`. Cada pod grava o próprio `Result_CSS_*_pod_<pod>.csv`, então os arquivos de réplicas diferentes nunca colidem. O DaemonSet `fastcollector` grava em `/tmp/dataset` no mesmo nó.
+The plant closes each connection after the reply, so the socket stays in `TIME_WAIT` for 60 s on the load generator (fixed by the kernel; `tcp_fin_timeout` does not change it). With the default port range (`32768–60999`, 28 232 ports) the host sustains about 28 232 / 60 ≈ **470 new connections/s** to one destination, summed over all plants. The request rate is `M / RTT` (free-running) or `M × 1000 / REQUEST_PERIOD_MS`. Above the limit new requests fail (`ok = 0`, `curlCode` ≠ 0) until old sockets expire.
 
-### Esgotamento de portas efêmeras no gerador de carga
-
-Abrir uma conexão TCP por requisição tem um custo na máquina que roda as plantas. A planta (libcurl) fecha cada conexão logo após a resposta, então é o lado da planta que faz o *fechamento ativo*, e cada socket fica 60 s em `TIME_WAIT` (`TCP_TIMEWAIT_LEN`, valor fixo no kernel Linux; o `tcp_fin_timeout` **não** reduz esse tempo). Cada socket em `TIME_WAIT` mantém sua porta local reservada para o mesmo destino (IP, porta). Com o intervalo padrão `net.ipv4.ip_local_port_range = 32768 60999` (28 232 portas), a taxa sustentável para um destino é de cerca de
-
-$$ \frac{28\,232 \text{ portas}}{60 \text{ s}} \approx 470 \text{ conexões novas/s} $$
-
-para a máquina geradora de carga inteira, isto é, somando as *M* plantas. Acima dessa taxa, as portas acabam depois de `28 232 / taxa` segundos e as requisições novas falham: a planta as registra com `ok = 0` e `curlCode` diferente de zero (observado: 56, *failure when receiving data from the peer*; 7 ou 99 também são possíveis) e mantém sua entrada de controle (`s = 0`). As falhas duram até os sockets mais antigos em `TIME_WAIT` expirarem; em execuções com mais de 60 s, elas aparecem e somem em rajadas.
-
-Observado num teste local (3 contêineres do controlador atrás de um nginx, 4 plantas em modo livre, ~670 req/s no total): o número de sockets em `TIME_WAIT` cresceu linearmente e parou em 28 235. A partir de t ≈ 23 s praticamente todas as requisições falharam, e as plantas ficaram em malha aberta até o fim da execução de 60 s. No cluster, a taxa é `M / RTT` no modo livre ou `M × 1000 / REQUEST_PERIOD_MS` com período fixo (por exemplo, M = 32 com 10 ms → 3 200 conexões/s), então o limite é atingido com poucos clientes.
-
-As versões das plantas que gravavam só `Timestamp(s),RTT(ms),Setpoint,Output,ControlInput` escondiam essas falhas: uma requisição com falha aparecia como uma linha normal (só o stderr mostrava `Network Error`). Verifique `ok` e `curlCode` antes de usar uma execução.
-
-**Correção: ajustar a máquina geradora de carga** (exige root; nada muda no cluster):
+Fix on the load generator:
 
 ```bash
-# Usa (quase) todo o intervalo de portas para conexões de saída: ~64 500 portas.
 sudo sysctl -w net.ipv4.ip_local_port_range="1024 65535"
-
-# Permite que uma conexão de saída nova reutilize uma porta em TIME_WAIT
-# quando os timestamps TCP garantem que segmentos antigos não serão
-# confundidos com a conexão nova. Padrão 2 = só loopback; 1 = todas.
-sudo sysctl -w net.ipv4.tcp_tw_reuse=1
-
-# Exigido pelo tcp_tw_reuse (já vale 1 por padrão).
-sudo sysctl -w net.ipv4.tcp_timestamps=1
+sudo sysctl -w net.ipv4.tcp_tw_reuse=1      # reuse TIME_WAIT ports for outgoing connections (needs tcp_timestamps=1, the default)
 ```
 
-Para manter os ajustes após reiniciar, grave-os em `/etc/sysctl.d/99-loadgen.conf` e rode `sudo sysctl --system`. Com `tcp_tw_reuse = 1`, uma porta pode ser reutilizada quando o seu socket em `TIME_WAIT` tiver mais que `net.ipv4.tcp_tw_reuse_delay` (1 s por padrão, nos kernels que têm esse parâmetro), o que eleva o limite muito acima das taxas do experimento. Não procure o `tcp_tw_recycle`: ele era inseguro atrás de NAT e foi removido no Linux 4.12.
+Persist in `/etc/sysctl.d/99-loadgen.conf`. Monitor with `ss -Htan state time-wait | wc -l`. Alternatives: `HTTP_KEEPALIVE=1` (but load is no longer spread per request) or several source IPs. At high rates also check `nf_conntrack_count` / `nf_conntrack_max` on the nodes.
 
-Alternativas, cada uma com um efeito colateral sobre o que está sendo medido:
+## Clocks
 
-| Opção | Efeito |
-|-------|--------|
-| `HTTP_KEEPALIVE=1` | Uma conexão por planta, sem acúmulo de `TIME_WAIT`. Mas o kube-proxy balanceia conexões: cada planta fica presa a uma réplica, e adicionar réplicas deixa de distribuir a carga de uma planta. |
-| `REQUEST_PERIOD_MS` > 0 | Limita a taxa a `M × 1000 / REQUEST_PERIOD_MS`; sozinho, só basta para M pequeno. |
-| Vários IPs de origem no gerador de carga | Cada par (IP de origem, destino) tem o seu próprio intervalo de portas. |
-
-Para verificar uma máquina durante uma execução:
-
-```bash
-ss -Htan state time-wait | wc -l          # sockets em TIME_WAIT (limite = tamanho do intervalo de portas)
-sysctl net.ipv4.ip_local_port_range net.ipv4.tcp_tw_reuse
-```
-
-Os nós do cluster mantêm o estado de NAT de cada conexão do Service na tabela conntrack. Com milhares de conexões por segundo, vale também verificar `sysctl net.netfilter.nf_conntrack_count net.netfilter.nf_conntrack_max` nos nós; com a tabela cheia, conexões novas são descartadas.
-
-### Identificação da planta
-
-Com `externalTrafficPolicy: Cluster` (o padrão), uma requisição que chega a um nó pode ser encaminhada a um pod de outro nó e tem o endereço de origem traduzido (SNAT). O IP de origem visto pelo pod é então o de um nó, e não o da máquina das plantas. Por isso a identidade da planta é enviada no corpo da requisição (`client_id`), e o endereço IP não é registrado.
-
-## Relógios e bases de tempo
-
-| Grandeza | Relógio | Comparável entre máquinas? |
-|----------|---------|----------------------------|
-| `TimestampFormat_us` (UTC), `Timestamp_us` (plantas e controlador) | `CLOCK_REALTIME` / `system_clock` | Só se as máquinas estiverem sincronizadas (NTP/chrony). O fuso horário não importa: as duas colunas estão em UTC. |
-| RTT, tempo de laço, tempos de atendimento, `ElapsedTime_us` | `CLOCK_MONOTONIC` / `steady_clock` | Só durações; imunes a ajustes do relógio. |
-| `t` (plantas) | Tempo de simulação, `k·dt` | Por planta, começa em 0. |
-
-Durações devem ser sempre calculadas a partir das colunas monotônicas; as colunas de relógio de parede servem para alinhar séries de fontes diferentes (plantas, pods do controlador, fastcollector).
+| Columns | Clock | Note |
+|---------|-------|------|
+| `TimestampFormat_us`, `Timestamp_us` | realtime, UTC | Comparable across hosts only with NTP. |
+| RTT, loop and service times, `ElapsedTime_us` | monotonic | Durations; immune to clock changes. |
+| `t` | simulation time | Per plant, starts at 0. |

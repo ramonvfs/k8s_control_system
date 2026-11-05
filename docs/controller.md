@@ -1,47 +1,23 @@
-# Serviço do controlador fuzzy
+# Fuzzy controller
 
-Há duas implementações do mesmo controlador. A em C++ (`controllers/fuzzy_cpp`) é a implantada nos experimentos; a em Python (`controllers/fuzzy_py`) é uma implementação de referência com a mesma API e o mesmo formato de log.
+[Português](pt-BR/controller.md)
 
-| Arquivo | Função |
-|---------|--------|
-| `fuzzy_cpp/src/fuzzy_fim.hpp` | Máquina de inferência fuzzy (motor FuzzyLite). |
-| `fuzzy_cpp/src/csv_logger.hpp` | Gravador de CSV assíncrono. |
-| `fuzzy_cpp/src/main.cpp` | Servidor HTTP, configuração, contabilidade das requisições, encerramento. |
-| `fuzzy_py/control.py` | Implementação em Python (scikit-fuzzy + Flask). |
+`controllers/fuzzy_cpp` (C++: `fuzzy_fim.hpp` inference, `csv_logger.hpp` async log, `main.cpp` HTTP server) and `controllers/fuzzy_py` (Python) implement the same system, API and log format. Their outputs differ by less than 10⁻³ (defuzzification discretization).
 
-## Máquina de inferência fuzzy (FIM)
+## Inference system
 
-Sistema Mamdani com duas entradas e uma saída, todas no universo normalizado [−1, 1].
+Mamdani, inputs `error` and `delta_error` clamped to [−1, 1], output in [−1, 1]. AND = min, implication = min, aggregation = max, centroid defuzzification (100 samples), output 0 when no rule fires.
 
-| Propriedade | Valor |
-|-------------|-------|
-| Entradas | `error` (e), `delta_error` (ed); limitadas a [−1, 1] |
-| Saída | `output` (s), incremento da entrada de controle |
-| Termos por variável | 7: LN, MN, SN, ZZ, SP, MP, LP |
-| Regras | 49 (tabela 7×7 completa) |
-| Conjunção (E) | Mínimo |
-| Implicação | Mínimo |
-| Agregação | Máximo |
-| Ativação | General (todas as regras disparam; padrão do FuzzyLite) |
-| Defuzzificação | Centroide, 100 amostras (FuzzyLite) / universo de 101 pontos (scikit-fuzzy) |
-| Saída padrão | 0 (nenhuma regra ativada) |
+Membership functions (same for all variables):
 
-Funções de pertinência (iguais para as três variáveis):
+| LN | MN | SN | ZZ | SP | MP | LP |
+|----|----|----|----|----|----|----|
+| trap(−1, −1, −0.7, −0.4) | tri(−0.7, −0.4, −0.1) | tri(−0.4, −0.1, 0) | tri(−0.1, 0, 0.1) | tri(0, 0.1, 0.4) | tri(0.1, 0.4, 0.7) | trap(0.4, 0.7, 1, 1) |
 
-| Termo | Forma | Parâmetros |
-|-------|-------|------------|
-| LN (grande negativo) | Trapézio | −1,0; −1,0; −0,7; −0,4 |
-| MN (médio negativo) | Triângulo | −0,7; −0,4; −0,1 |
-| SN (pequeno negativo) | Triângulo | −0,4; −0,1; 0,0 |
-| ZZ (zero) | Triângulo | −0,1; 0,0; 0,1 |
-| SP (pequeno positivo) | Triângulo | 0,0; 0,1; 0,4 |
-| MP (médio positivo) | Triângulo | 0,1; 0,4; 0,7 |
-| LP (grande positivo) | Trapézio | 0,4; 0,7; 1,0; 1,0 |
+Rules (row: error, column: delta_error):
 
-Tabela de regras (`se error é <linha> e delta_error é <coluna> então output é <célula>`):
-
-| e \ ed | LN | MN | SN | ZZ | SP | MP | LP |
-|--------|----|----|----|----|----|----|----|
+| | LN | MN | SN | ZZ | SP | MP | LP |
+|-|----|----|----|----|----|----|----|
 | **LN** | LN | LN | LN | LN | MN | SN | ZZ |
 | **MN** | LN | LN | LN | MN | SN | ZZ | SP |
 | **SN** | LN | LN | MN | SN | ZZ | SP | MP |
@@ -50,67 +26,34 @@ Tabela de regras (`se error é <linha> e delta_error é <coluna> então output �
 | **MP** | SN | ZZ | SP | MP | LP | LP | LP |
 | **LP** | ZZ | SP | MP | LP | LP | LP | LP |
 
-As saídas em C++ e em Python diferem apenas pela discretização da defuzzificação: em 205 pares de entrada (5 escolhidos à mão + 200 aleatórios uniformes em [−1, 1]²), a diferença absoluta máxima foi 6,4·10⁻⁴ e a média, 1,2·10⁻⁴.
+## API
 
-## API HTTP
+- `POST /control` `{"error", "delta_error", "client_id", "seq"}` → `{"u", "pod"}` (`u` first, for older plants). Invalid input → 400.
+- `GET /health` → `{"status": "ok", "pod"}`.
 
-### `POST /control`
+## Concurrency
 
-Requisição (JSON):
+cpp-httplib serves requests from a thread pool (default `max(8, nCPU − 1)`, where nCPU is the node's CPU count even inside a container; `HTTP_THREADS` overrides it). The FuzzyLite engine stores inputs and intermediate results in its own objects and is not thread-safe, so inference is serialized by a mutex: **one inference at a time per pod**; throughput scales with replicas. Other relevant cpp-httplib defaults: listen backlog 5, keep-alive timeout 5 s. The Python version (Flask development server, tens of ms per inference) is a reference, not suited to 10 ms loops.
 
-| Campo | Tipo | Obrigatório | Descrição |
-|-------|------|-------------|-----------|
-| `error` | número | não (0) | Erro normalizado e. |
-| `delta_error` | número | não (0) | Variação normalizada do erro ed. |
-| `client_id` | texto | não | Identificador da planta, registrado como `IIoT_name`. |
-| `seq` | inteiro | não (−1) | Índice da requisição na planta, registrado como `seq`. |
+## Log
 
-Resposta `200` (JSON): `{"u": <saída do FIS>, "pod": "<nome do pod>"}`. `u` é sempre a primeira chave, para que binários de planta que leem a resposta com `sscanf("{\"u\": %lf}")` continuem funcionando. JSON inválido ou entradas não numéricas → `400` com `{"error": "Invalid JSON or Processing Error"}` (não registrado no log).
-
-### `GET /health`
-
-`{"status": "ok", "pod": "<nome do pod>"}`. Usado como readiness probe do Kubernetes.
-
-## Modelo de concorrência
-
-- **C++**: a cpp-httplib atende as conexões com um pool de threads (padrão `max(8, hardware_concurrency − 1)` threads, crescendo sob demanda até 4× esse valor; pode ser fixado com `HTTP_THREADS`). Dentro de um contêiner, `hardware_concurrency` informa as CPUs do nó, e não o limite de CPU do pod. O motor do FuzzyLite não é thread-safe: ele guarda as entradas, a ativação das regras e o conjunto agregado da saída nos próprios objetos, então duas inferências simultâneas misturariam os dados ou corromperiam estruturas internas. Por isso a inferência é serializada por um mutex por processo: **um pod faz uma inferência por vez**, e a vazão só escala com mais réplicas. A leitura do JSON e a montagem da resposta acontecem fora do mutex. Outros padrões da cpp-httplib relevantes sob carga: backlog de `listen` igual a 5 (`CPPHTTPLIB_LISTEN_BACKLOG`), timeout de keep-alive de 5 s e no máximo 100 requisições por conexão.
-- **Python**: servidor embutido do Flask (Werkzeug), uma thread por requisição; o `ControlSystemSimulation` do scikit-fuzzy tem o mesmo problema e é serializado com um `threading.Lock`. Esse servidor é voltado para desenvolvimento, e a inferência do scikit-fuzzy leva dezenas de milissegundos, então esta implementação não serve para malhas de 10 ms.
-
-## Log por requisição
-
-Cada réplica grava um arquivo CSV com uma linha por requisição `/control` (esquema em [data_schema.md](data_schema.md#log-do-controlador-result_csscsv)). Pontos de medição dentro do handler:
+One CSV per pod, one row per request ([schema](data_schema.md#controller-log)). Timing inside the handler:
 
 ```
-entrada do handler ─── lê JSON ─── espera o mutex da FIM ─── inferência ─── (resposta, linha de log)
-     │                    │                  │                     │
-  t_entry             t_parsed           t_locked               t_done
-                          └─ LockWait_us ───┘└─ Inference_us ─────┘
-  └──────────────────────────────── Handler_us ───────────────────┘
+entry ── parse ── wait mutex ── inference ── response
+        t_parsed  └LockWait_us┘└Inference_us┘
+└─────────────────── Handler_us ───────────┘
 ```
 
-`Request_rate` é o número de requisições que obtiveram o mutex neste pod durante os últimos `RATE_WINDOW_MS` (janela deslizante, incluindo a atual), dividido pela duração da janela: requisições por segundo por pod.
+Rows are buffered in memory and written by a background thread every second and on SIGTERM. File name: `Result_CSS_<start, UTC>[_Exp_<EXP_NAME>]_pod_<POD_NAME>.csv`.
 
-O handler só acrescenta uma linha já formatada a um buffer em memória; uma thread em segundo plano grava o buffer em disco uma vez por segundo, mantendo a E/S de disco fora do caminho da requisição. Ao receber SIGINT/SIGTERM, o servidor para de aceitar conexões, conclui as requisições em andamento e grava as linhas restantes antes de sair.
-
-## Configuração (variáveis de ambiente)
-
-| Variável | Padrão | Descrição |
-|----------|--------|-----------|
-| `PORT` | `5000` | Porta de escuta. |
-| `POD_NAME` | `$HOSTNAME` / hostname | Nome da réplica, gravado no log e devolvido na resposta. |
-| `NODE_NAME` | `-` | Nome do nó (só no banner de inicialização). |
-| `CONTROLLER_LOG` | `1` | `0` desativa o log CSV. |
-| `LOG_DIR` | `.` | Diretório do log CSV. |
-| `EXP_NAME` | vazio | Marcador opcional inserido no nome do arquivo. |
-| `HTTP_THREADS` | padrão da cpp-httplib | Número fixo de threads de atendimento (só C++). |
-| `RATE_WINDOW_MS` | `1000` | Janela do `Request_rate`. |
-
-Nome do arquivo de log: `Result_CSS_<AAAA-MM-DD_HH-MM-SS>[_Exp_<EXP_NAME>]_pod_<POD_NAME>.csv`, onde a data é o instante de início do processo, em UTC. Um pod grava um único arquivo durante toda a sua vida; as linhas de rodadas diferentes do experimento são separadas pelo `IIoT_name` (que, com o `CLIENT_ID` padrão das plantas, contém a planta, M, K e o índice do cliente) e pelo tempo.
-
-## Compilação
-
-```bash
-make ctrl_cpp                   # compilação nativa em controllers/fuzzy_cpp/build
-make docker_cpp CPP_TAG=v3      # imagem de contêiner (Alpine 3.19, multi-stage)
-make setup_py                   # virtualenv do controlador Python
-```
+| Variable (default) | Description |
+|--------------------|-------------|
+| `PORT` (`5000`) | Listening port. |
+| `POD_NAME` (hostname) | Replica name in log and reply. |
+| `NODE_NAME` (`-`) | Shown at startup. |
+| `CONTROLLER_LOG` (`1`) | 0 disables the log. |
+| `LOG_DIR` (`.`) | Log directory. |
+| `EXP_NAME` (empty) | Optional tag in the file name. |
+| `HTTP_THREADS` (library default) | Worker threads (C++). |
+| `RATE_WINDOW_MS` (`1000`) | Window of `Request_rate`. |
