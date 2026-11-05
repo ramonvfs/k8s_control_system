@@ -157,7 +157,7 @@ int main() {
     CsvLogger logger;
     if (cfg.log_enabled &&
         !logger.open(path,
-                     "TimestampFormat_us,Timestamp_us,ElapsedTime_us,Pod,IIoT_name,RemoteAddr,"
+                     "TimestampFormat_us,Timestamp_us,ElapsedTime_us,Pod,IIoT_name,"
                      "seq,e,ed,s,Request_rate,LockWait_us,Inference_us,Handler_us\n")) {
         std::cerr << "Cannot open log file " << path << " (logging disabled)" << std::endl;
     }
@@ -219,9 +219,9 @@ int main() {
 
         char line[768];
         std::snprintf(line, sizeof(line),
-                      "%s,%lld,%lld,%s,%s,%s,%lld,%.8f,%.8f,%.8f,%.2f,%lld,%lld,%lld\n",
+                      "%s,%lld,%lld,%s,%s,%lld,%.8f,%.8f,%.8f,%.2f,%lld,%lld,%lld\n",
                       format_wall(t_wall).c_str(), to_us(t_wall), us_between(start_steady, t_entry),
-                      cfg.pod.c_str(), csv_safe(client).c_str(), req.remote_addr.c_str(), seq,
+                      cfg.pod.c_str(), csv_safe(client).c_str(), seq,
                       e, de, u, in_window / rate_window_s,
                       us_between(t_parsed, t_locked), us_between(t_locked, t_done),
                       us_between(t_entry, t_done));

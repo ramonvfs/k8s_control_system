@@ -142,7 +142,7 @@ logger = None
 if LOG_ENABLED:
     logger = CsvLogger(
         log_path(),
-        "TimestampFormat_us,Timestamp_us,ElapsedTime_us,Pod,IIoT_name,RemoteAddr,"
+        "TimestampFormat_us,Timestamp_us,ElapsedTime_us,Pod,IIoT_name,"
         "seq,e,ed,s,Request_rate,LockWait_us,Inference_us,Handler_us\n")
 
 # --- FLASK ROUTES ---
@@ -192,7 +192,7 @@ def control():
         us = lambda dt: int(dt * 1e6)
         logger.push(
             f"{t_wall.strftime('%Y-%m-%d %H:%M:%S.%f')},{int(t_wall.timestamp() * 1e6)},"
-            f"{us(t_entry - START_MONO)},{POD_NAME},{csv_safe(client)},{request.remote_addr},"
+            f"{us(t_entry - START_MONO)},{POD_NAME},{csv_safe(client)},"
             f"{seq},{e:.8f},{de:.8f},{float(u_val):.8f},"
             f"{in_window / RATE_WINDOW_S:.2f},{us(t_locked - t_parsed)},"
             f"{us(t_done - t_locked)},{us(t_done - t_entry)}\n")
